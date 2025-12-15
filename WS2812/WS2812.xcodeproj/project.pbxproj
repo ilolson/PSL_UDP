@@ -7,19 +7,19 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		6AB6A7852EF08659006EB823 /* WS2812 Controller.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "WS2812 Controller.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6AF2B95F2EF0C50B002B04D1 /* WS2812.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WS2812.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		6AB6A7872EF08659006EB823 /* WS2812 Controller */ = {
+		6AF2B9612EF0C50B002B04D1 /* WS2812 */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "WS2812 Controller";
+			path = WS2812;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		6AB6A7822EF08659006EB823 /* Frameworks */ = {
+		6AF2B95C2EF0C50B002B04D1 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -29,18 +29,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		6AB6A77C2EF08659006EB823 = {
+		6AF2B9562EF0C50B002B04D1 = {
 			isa = PBXGroup;
 			children = (
-				6AB6A7872EF08659006EB823 /* WS2812 Controller */,
-				6AB6A7862EF08659006EB823 /* Products */,
+				6AF2B9612EF0C50B002B04D1 /* WS2812 */,
+				6AF2B9602EF0C50B002B04D1 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		6AB6A7862EF08659006EB823 /* Products */ = {
+		6AF2B9602EF0C50B002B04D1 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				6AB6A7852EF08659006EB823 /* WS2812 Controller.app */,
+				6AF2B95F2EF0C50B002B04D1 /* WS2812.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,64 +48,64 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		6AB6A7842EF08659006EB823 /* WS2812 Controller */ = {
+		6AF2B95E2EF0C50B002B04D1 /* WS2812 */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 6AB6A7902EF0865A006EB823 /* Build configuration list for PBXNativeTarget "WS2812 Controller" */;
+			buildConfigurationList = 6AF2B96A2EF0C50C002B04D1 /* Build configuration list for PBXNativeTarget "WS2812" */;
 			buildPhases = (
-				6AB6A7812EF08659006EB823 /* Sources */,
-				6AB6A7822EF08659006EB823 /* Frameworks */,
-				6AB6A7832EF08659006EB823 /* Resources */,
+				6AF2B95B2EF0C50B002B04D1 /* Sources */,
+				6AF2B95C2EF0C50B002B04D1 /* Frameworks */,
+				6AF2B95D2EF0C50B002B04D1 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				6AB6A7872EF08659006EB823 /* WS2812 Controller */,
+				6AF2B9612EF0C50B002B04D1 /* WS2812 */,
 			);
-			name = "WS2812 Controller";
+			name = WS2812;
 			packageProductDependencies = (
 			);
-			productName = "WS2812 Controller";
-			productReference = 6AB6A7852EF08659006EB823 /* WS2812 Controller.app */;
+			productName = WS2812;
+			productReference = 6AF2B95F2EF0C50B002B04D1 /* WS2812.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
-		6AB6A77D2EF08659006EB823 /* Project object */ = {
+		6AF2B9572EF0C50B002B04D1 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
-					6AB6A7842EF08659006EB823 = {
+					6AF2B95E2EF0C50B002B04D1 = {
 						CreatedOnToolsVersion = 26.2;
 					};
 				};
 			};
-			buildConfigurationList = 6AB6A7802EF08659006EB823 /* Build configuration list for PBXProject "WS2812 Controller" */;
+			buildConfigurationList = 6AF2B95A2EF0C50B002B04D1 /* Build configuration list for PBXProject "WS2812" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
 			);
-			mainGroup = 6AB6A77C2EF08659006EB823;
+			mainGroup = 6AF2B9562EF0C50B002B04D1;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
-			productRefGroup = 6AB6A7862EF08659006EB823 /* Products */;
+			productRefGroup = 6AF2B9602EF0C50B002B04D1 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				6AB6A7842EF08659006EB823 /* WS2812 Controller */,
+				6AF2B95E2EF0C50B002B04D1 /* WS2812 */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		6AB6A7832EF08659006EB823 /* Resources */ = {
+		6AF2B95D2EF0C50B002B04D1 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -115,7 +115,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		6AB6A7812EF08659006EB823 /* Sources */ = {
+		6AF2B95B2EF0C50B002B04D1 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -125,7 +125,7 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
-		6AB6A78E2EF0865A006EB823 /* Debug */ = {
+		6AF2B9682EF0C50C002B04D1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -189,7 +189,7 @@
 			};
 			name = Debug;
 		};
-		6AB6A78F2EF0865A006EB823 /* Release */ = {
+		6AF2B9692EF0C50C002B04D1 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -236,8 +236,6 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
@@ -248,20 +246,16 @@
 			};
 			name = Release;
 		};
-		6AB6A7912EF0865A006EB823 /* Debug */ = {
+		6AF2B96B2EF0C50C002B04D1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = WS2812_Controller.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4N2YZ7T75B;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Provides the UDP path to the PSL_UDP strip once the hotspot is connected.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -272,7 +266,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "iolson.WS2812-Controller";
+				PRODUCT_BUNDLE_IDENTIFIER = iolson.WS2812;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -284,20 +278,16 @@
 			};
 			name = Debug;
 		};
-		6AB6A7922EF0865A006EB823 /* Release */ = {
+		6AF2B96C2EF0C50C002B04D1 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				CODE_SIGN_ENTITLEMENTS = WS2812_Controller.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4N2YZ7T75B;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Provides the UDP path to the PSL_UDP strip once the hotspot is connected.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -308,7 +298,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "iolson.WS2812-Controller";
+				PRODUCT_BUNDLE_IDENTIFIER = iolson.WS2812;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -323,25 +313,25 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		6AB6A7802EF08659006EB823 /* Build configuration list for PBXProject "WS2812 Controller" */ = {
+		6AF2B95A2EF0C50B002B04D1 /* Build configuration list for PBXProject "WS2812" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				6AB6A78E2EF0865A006EB823 /* Debug */,
-				6AB6A78F2EF0865A006EB823 /* Release */,
+				6AF2B9682EF0C50C002B04D1 /* Debug */,
+				6AF2B9692EF0C50C002B04D1 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		6AB6A7902EF0865A006EB823 /* Build configuration list for PBXNativeTarget "WS2812 Controller" */ = {
+		6AF2B96A2EF0C50C002B04D1 /* Build configuration list for PBXNativeTarget "WS2812" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				6AB6A7912EF0865A006EB823 /* Debug */,
-				6AB6A7922EF0865A006EB823 /* Release */,
+				6AF2B96B2EF0C50C002B04D1 /* Debug */,
+				6AF2B96C2EF0C50C002B04D1 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};
-	rootObject = 6AB6A77D2EF08659006EB823 /* Project object */;
+	rootObject = 6AF2B9572EF0C50B002B04D1 /* Project object */;
 }

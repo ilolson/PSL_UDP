@@ -9,14 +9,27 @@
 
 #define LED_PIN 0
 #define NUM_LEDS 16
-#define UDP_PORT 4210
 #define PACKET_BUFFER 128
-#define AP_SSID "PSL_UDP"
-#define AP_PASSWORD "psludp123"
-#define AUTH_TYPE CYW43_AUTH_WPA2_AES_PSK
+#define BLE_DEVICE_NAME "PSL Motion"
+#define BLE_DEVICE_NAME_LEN (sizeof(BLE_DEVICE_NAME) - 1)
 
 #define MIN_BRIGHTNESS_NORMALIZED 0.05f
 #define MAX_BRIGHTNESS_NORMALIZED (100.0f / 255.0f)
+
+static const uint8_t PSL_BLE_SERVICE_UUID[16] = {
+    0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f,
+    0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe
+};
+static const uint8_t PSL_COMMAND_CHAR_UUID[16] = {
+    0x0c, 0x1d, 0x2e, 0x3f, 0x40, 0x51, 0x62, 0x73,
+    0x84, 0x95, 0xa6, 0xb7, 0xc8, 0xd9, 0xea, 0xfb
+};
+static uint16_t ble_command_value_handle = 0;
+
+static uint16_t segment_start = 0;
+static uint16_t segment_end = NUM_LEDS - 1;
+
+static void render_color_from_state(void);
 
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
@@ -25,13 +38,11 @@
 #include "hardware/clocks.h"
 #include "hardware/watchdog.h"
 
-#include "lwipopts.h"
-#include "lwip/inet.h"
-#include "lwip/ip_addr.h"
-#include "lwip/ip4_addr.h"
-#include "lwip/udp.h"
+#include "btstack.h"
+#include "ble/att_db.h"
+#include "ble/att_db_util.h"
+#include "ble/att_server.h"
 
-#include "dhcpserver.h"
 #include "ws2812.pio.h"
 
 static PIO led_pio = pio0;
@@ -86,19 +97,6 @@ static void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_
     *b = (uint8_t)clampf((b1 + m) * 255.0f, 0.0f, 255.0f);
 }
 
-static void ws2812_program_init(PIO pio, uint sm, uint offset, uint pin, float freq, bool invert) {
-    pio_sm_config config = ws2812_program_get_default_config(offset);
-    sm_config_set_out_shift(&config, false, true, 32);
-    sm_config_set_fifo_join(&config, PIO_FIFO_JOIN_TX);
-    // match the requested bit clock speed
-    sm_config_set_clkdiv(&config, (float)clock_get_hz(clk_sys) / freq);
-    pio_gpio_init(pio, pin);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
-    pio_sm_init(pio, sm, offset, &config);
-    pio_sm_set_enabled(pio, sm, true);
-    (void)invert;
-}
-
 static void ws2812_init(void) {
     led_offset = pio_add_program(led_pio, &ws2812_program);
     ws2812_program_init(led_pio, led_sm, led_offset, LED_PIN, 800000.0f, false);
@@ -106,8 +104,41 @@ static void ws2812_init(void) {
 
 static void ws2812_write_color(uint32_t grb) {
     for (uint i = 0; i < NUM_LEDS; ++i) {
-        pio_sm_put_blocking(led_pio, led_sm, grb << 8u);
+        uint32_t color = (i >= segment_start && i <= segment_end) ? grb : 0;
+        pio_sm_put_blocking(led_pio, led_sm, color << 8u);
     }
+}
+
+static void clamp_segment_bounds(void) {
+    if (segment_start >= NUM_LEDS) {
+        segment_start = NUM_LEDS - 1;
+    }
+    if (segment_end >= NUM_LEDS) {
+        segment_end = NUM_LEDS - 1;
+    }
+    if (segment_start > segment_end) {
+        segment_end = segment_start;
+    }
+}
+
+static void set_segment_start(uint32_t start) {
+    uint32_t index = start;
+    if (index >= NUM_LEDS) {
+        index = NUM_LEDS - 1;
+    }
+    segment_start = (uint16_t)index;
+    clamp_segment_bounds();
+    render_color_from_state();
+}
+
+static void set_segment_end(uint32_t end) {
+    uint32_t index = end;
+    if (index >= NUM_LEDS) {
+        index = NUM_LEDS - 1;
+    }
+    segment_end = (uint16_t)index;
+    clamp_segment_bounds();
+    render_color_from_state();
 }
 
 static float current_hue = 210.0f;
@@ -224,77 +255,101 @@ static void handle_motion_packet(const char *packet, size_t len) {
         adjust_brightness(delta);
         return;
     }
+    unsigned long segment_idx = 0;
+    if (sscanf(buffer, "SEG_START,%lu", &segment_idx) == 1) {
+        set_segment_start(segment_idx > 0 ? segment_idx - 1 : 0);
+        return;
+    }
+    if (sscanf(buffer, "SEG_END,%lu", &segment_idx) == 1) {
+        set_segment_end(segment_idx > 0 ? segment_idx - 1 : 0);
+        return;
+    }
     if (sscanf(buffer, "%f,%f,%f", &pitch, &roll, &yaw) == 3) {
         render_motion_color(pitch, roll, yaw);
     }
 }
 
-static void udp_motion_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
-    (void)arg;
-    (void)pcb;
-    (void)addr;
-    (void)port;
-    if (!p) {
-        return;
+static int ble_command_write_callback(hci_con_handle_t con_handle, uint16_t attribute_handle,
+                                      uint16_t transaction_mode, uint16_t offset, uint8_t *buffer, uint16_t buffer_size) {
+    (void)con_handle;
+    (void)offset;
+
+    if (attribute_handle != ble_command_value_handle) {
+        return ATT_ERROR_ATTRIBUTE_NOT_FOUND;
     }
-    char buffer[PACKET_BUFFER];
-    size_t copy_len = pbuf_copy_partial(p, buffer, sizeof(buffer) - 1, 0);
-    buffer[copy_len] = '\0';
-    handle_motion_packet(buffer, copy_len);
-    pbuf_free(p);
+    if (transaction_mode != ATT_TRANSACTION_MODE_NONE || !buffer || buffer_size == 0) {
+        return 0;
+    }
+
+    char payload[PACKET_BUFFER];
+    size_t copy_len = buffer_size < sizeof(payload) - 1 ? buffer_size : sizeof(payload) - 1;
+    memcpy(payload, buffer, copy_len);
+    payload[copy_len] = '\0';
+
+    handle_motion_packet(payload, copy_len);
+    return 0;
 }
 
-static void start_udp_listener(void) {
-    struct udp_pcb *pcb = udp_new();
-    if (!pcb) {
-        printf("Failed to allocate UDP pcb\n");
-        return;
-    }
-    err_t err = udp_bind(pcb, IP_ADDR_ANY, UDP_PORT);
-    if (err != ERR_OK) {
-        printf("UDP bind failed: %d\n", err);
-        udp_remove(pcb);
-        return;
-    }
-    udp_recv(pcb, udp_motion_recv, NULL);
-    printf("UDP listener ready on port %d\n", UDP_PORT);
+static void init_ble_service(void) {
+    l2cap_init();
+    sm_init();
+
+    att_db_util_init();
+    att_db_util_add_service_uuid128(PSL_BLE_SERVICE_UUID);
+    ble_command_value_handle = att_db_util_add_characteristic_uuid128(
+        PSL_COMMAND_CHAR_UUID,
+        ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
+        ATT_SECURITY_NONE,
+        ATT_SECURITY_NONE,
+        NULL,
+        0);
+    att_server_init(att_db_util_get_address(), NULL, ble_command_write_callback);
+
+    uint8_t adv_data[21];
+    size_t adv_index = 0;
+    adv_data[adv_index++] = 2;
+    adv_data[adv_index++] = BLUETOOTH_DATA_TYPE_FLAGS;
+    adv_data[adv_index++] = 0x06;
+    adv_data[adv_index++] = 17;
+    adv_data[adv_index++] = BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS;
+    memcpy(&adv_data[adv_index], PSL_BLE_SERVICE_UUID, sizeof(PSL_BLE_SERVICE_UUID));
+    adv_index += sizeof(PSL_BLE_SERVICE_UUID);
+
+    uint8_t scan_data[2 + BLE_DEVICE_NAME_LEN];
+    size_t scan_len = 0;
+    scan_data[scan_len++] = (uint8_t)(1 + BLE_DEVICE_NAME_LEN);
+    scan_data[scan_len++] = BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME;
+    memcpy(&scan_data[scan_len], BLE_DEVICE_NAME, BLE_DEVICE_NAME_LEN);
+    scan_len += BLE_DEVICE_NAME_LEN;
+
+    bd_addr_t null_addr;
+    memset(null_addr, 0, sizeof(null_addr));
+    gap_advertisements_set_params(0x0030, 0x0030, 0, 0, null_addr, 0x07, 0x00);
+    const uint8_t adv_len = (uint8_t)adv_index;
+    gap_advertisements_set_data(adv_len, adv_data);
+    gap_scan_response_set_data((uint8_t)scan_len, scan_data);
+    gap_advertisements_enable(1);
+
+    hci_power_control(HCI_POWER_ON);
+    printf("BLE %s service ready\n", BLE_DEVICE_NAME);
 }
 
 int main(void) {
     stdio_init_all();
-    printf("Starting PSL_UDP motion controller\n");
+    printf("Starting PSL BLE motion controller\n");
 
     if (cyw43_arch_init()) {
         printf("cyw43 init failed\n");
         return 1;
     }
-    cyw43_arch_enable_ap_mode(AP_SSID, AP_PASSWORD, AUTH_TYPE);
-
-    ip4_addr_t ip4;
-    ip4_addr_t mask4;
-    IP4_ADDR(&ip4, 192, 168, 4, 1);
-    IP4_ADDR(&mask4, 255, 255, 255, 0);
-
-    ip_addr_t ap_ip;
-    ip_addr_t ap_mask;
-    ip_addr_set_ip4_u32(&ap_ip, ip4.addr);
-    ip_addr_set_ip4_u32(&ap_mask, mask4.addr);
-
-    dhcp_server_t lease_server;
-    dhcp_server_init(&lease_server, &ap_ip, &ap_mask);
 
     ws2812_init();
     render_color_from_state();
 
-    printf("Access point %s ready. Send UDP to 192.168.4.1:%d\n", AP_SSID, UDP_PORT);
-    start_udp_listener();
+    init_ble_service();
 
-    while (true) {
-        tight_loop_contents();
-        sleep_ms(1000);
-    }
+    btstack_run_loop_execute();
 
-    // unreachable but keeps compilers happy
-    (void)lease_server;
+    cyw43_arch_deinit();
     return 0;
 }

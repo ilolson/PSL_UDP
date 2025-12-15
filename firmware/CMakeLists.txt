@@ -24,14 +24,7 @@ endif()
 
 add_executable(psl_udp ${APP_SOURCES})
 pico_generate_pio_header(psl_udp ${SRC_DIR}/ws2812.pio)
-target_include_directories(psl_udp PRIVATE ${SRC_DIR} ${CMAKE_CURRENT_BINARY_DIR}
-    $ENV{PICO_SDK_PATH}/src/rp2_common/pico_cyw43_arch/include
-    $ENV{PICO_SDK_PATH}/src/rp2_common/pico_cyw43_driver/include
-    $ENV{PICO_SDK_PATH}/src/rp2_common/pico_lwip/include
-    $ENV{PICO_SDK_PATH}/src/rp2_common/pico_rand/include
-    $ENV{PICO_SDK_PATH}/src/rp2_common/pico_async_context/include
-    $ENV{PICO_SDK_PATH}/lib/cyw43-driver/src
-    $ENV{PICO_SDK_PATH}/lib/lwip/src/include)
+target_include_directories(psl_udp PRIVATE ${SRC_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_features(psl_udp PRIVATE c_std_11)
 target_compile_options(psl_udp PRIVATE -Wall -Wextra)
 
@@ -40,12 +33,15 @@ target_link_libraries(psl_udp
     pico_stdlib
     tinyusb_device
     tinyusb_board
-    pico_cyw43_arch_threadsafe_background
-    pico_lwip_nosys
+    pico_btstack_ble
+    pico_btstack_cyw43
+    pico_cyw43_arch_none
     hardware_pio
     hardware_gpio
     hardware_clocks
 )
+
+target_compile_definitions(psl_udp PRIVATE CYW43_LWIP=0)
 
 # Use USB stdio; disable UART stdio
 pico_enable_stdio_usb(psl_udp 1)
