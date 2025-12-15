@@ -13,7 +13,7 @@ set -euo pipefail
 # ---------- Config (overridable via env/flags) ----------
 PICO_SDK_PATH="${PICO_SDK_PATH:-$HOME/pico-sdk}"
 PICO_EXTRAS_PATH="${PICO_EXTRAS_PATH:-$HOME/pico-extras}"
-PICO_BOARD="${PICO_BOARD:-pico2}"          # RP2350 Pico 2 by default; use 'pico' for RP2040
+PICO_BOARD="${PICO_BOARD:-pico_w}"         # Pico W by default; use 'pico' for RP2040 or 'pico2' for RP2350
 BUILD_TYPE="${BUILD_TYPE:-Debug}"          # or Release
 GENERATOR="${GENERATOR:-}"                 # auto (prefers Ninja)
 # Where to install the official Arm GNU Toolchain if needed

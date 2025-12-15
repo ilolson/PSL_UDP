@@ -82,6 +82,19 @@ static void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_
     *b = (uint8_t)clampf((b1 + m) * 255.0f, 0.0f, 255.0f);
 }
 
+static void ws2812_program_init(PIO pio, uint sm, uint offset, uint pin, float freq, bool invert) {
+    pio_sm_config config = ws2812_program_get_default_config(offset);
+    sm_config_set_out_shift(&config, false, true, 32);
+    sm_config_set_fifo_join(&config, PIO_FIFO_JOIN_TX);
+    // match the requested bit clock speed
+    sm_config_set_clkdiv(&config, (float)clock_get_hz(clk_sys) / freq);
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_init(pio, sm, offset, &config);
+    pio_sm_set_enabled(pio, sm, true);
+    (void)invert;
+}
+
 static void ws2812_init(void) {
     led_offset = pio_add_program(led_pio, &ws2812_program);
     ws2812_program_init(led_pio, led_sm, led_offset, LED_PIN, 800000.0f, false);

@@ -7,6 +7,7 @@
 
 import Combine
 import CoreMotion
+import Foundation
 import Network
 import NetworkExtension
 import SwiftUI
@@ -156,18 +157,18 @@ private final class MotionUDPManager: ObservableObject {
         )
         configuration.joinOnce = false
         NEHotspotConfigurationManager.shared.apply(configuration) { [weak self] error in
-            if let hotspotError = error as? NEHotspotConfigurationError {
-                switch hotspotError {
-                case .alreadyAssociated:
-                    self?.updateStatus("Already joined \(Self.wifiSSID)", ready: false)
-                default:
-                    self?.updateStatus("Hotspot error: \(String(describing: hotspotError))", ready: false)
-                }
+            guard let self = self else { return }
+            if let nsError = error as NSError?,
+               nsError.domain == NEHotspotConfigurationErrorDomain,
+               let code = NEHotspotConfigurationError(rawValue: nsError.code),
+               code == .alreadyAssociated {
+                self.updateStatus("Already joined \(Self.wifiSSID)", ready: false)
+                return
             } else if let error = error {
-                self?.updateStatus("Hotspot error: \(error.localizedDescription)", ready: false)
-            } else {
-                self?.updateStatus("Hotspot joined \(Self.wifiSSID)", ready: false)
+                self.updateStatus("Hotspot error: \(error.localizedDescription)", ready: false)
+                return
             }
+            self.updateStatus("Hotspot joined \(Self.wifiSSID)", ready: false)
         }
     }
 
