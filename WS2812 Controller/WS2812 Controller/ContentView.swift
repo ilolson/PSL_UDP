@@ -14,6 +14,8 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var motionController = MotionUDPManager()
+    @State private var manualHueText = ""
+    @State private var manualBrightnessText = ""
 
     var body: some View {
         VStack(spacing: 18) {
@@ -35,12 +37,71 @@ struct ContentView: View {
                 MetricCard(label: "Yaw", value: motionController.yawDegrees, suffix: "°")
             }
 
-            Button("Reconnect") {
-                motionController.restartConnection()
+            VStack(spacing: 10) {
+                Text("Hold a control and move your device to tweak the strip.")
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 12) {
+                    HoldAdjustmentButton(
+                        title: "Twist for Hue",
+                        active: motionController.hueHoldActive
+                    ) {
+                        motionController.setHueAdjustmentActive($0)
+                    }
+
+                    HoldAdjustmentButton(
+                        title: "Z-axis Brightness",
+                        active: motionController.brightnessHoldActive
+                    ) {
+                        motionController.setBrightnessAdjustmentActive($0)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            VStack(spacing: 12) {
+                Text("Manual hue/brightness")
+                    .font(.footnote)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 12) {
+                    TextField("Hue (0-360)", text: $manualHueText)
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.decimalPad)
+                        .submitLabel(.send)
+                        .onSubmit(sendManualHue)
+                    Button("Send") {
+                        sendManualHue()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(manualHueText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                HStack(spacing: 12) {
+                    TextField("Brightness (0-100)", text: $manualBrightnessText)
+                        .textFieldStyle(.roundedBorder)
+                        .keyboardType(.decimalPad)
+                        .submitLabel(.send)
+                        .onSubmit(sendManualBrightness)
+                    Button("Send") {
+                        sendManualBrightness()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(manualBrightnessText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .frame(maxWidth: .infinity)
+
+            Button("Reconnect & Reset") {
+                motionController.requestResetAndReconnect()
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(!motionController.canReconnect)
             .frame(maxWidth: .infinity)
 
             Spacer()
@@ -49,6 +110,18 @@ struct ContentView: View {
         .task {
             motionController.start()
         }
+    }
+
+    private func sendManualHue() {
+        guard let value = Double(manualHueText) else { return }
+        motionController.sendManualHue(value)
+        manualHueText = ""
+    }
+
+    private func sendManualBrightness() {
+        guard let value = Double(manualBrightnessText) else { return }
+        motionController.sendManualBrightness(value)
+        manualBrightnessText = ""
     }
 }
 
@@ -105,6 +178,8 @@ private final class MotionUDPManager: ObservableObject {
     @Published private(set) var rollDegrees = 0.0
     @Published private(set) var yawDegrees = 0.0
     @Published private(set) var isReady = false
+    @Published private(set) var hueHoldActive = false
+    @Published private(set) var brightnessHoldActive = false
 
     var canReconnect: Bool {
         !connectionReady
@@ -124,16 +199,37 @@ private final class MotionUDPManager: ObservableObject {
     private var started = false
     private var connectionPending = false
     private var connectionReady = false
+    private var pendingResetRequest = false
+    private var hotspotConfigured = false
+    private enum AdjustmentMode {
+        case none
+        case hue
+        case brightness
+    }
+
+    private let adjustmentStateQueue = DispatchQueue(label: "com.psl.motion-udp.adjustment", qos: .userInteractive)
+    private var adjustmentMode: AdjustmentMode = .none
+    private var huePressed = false
+    private var brightnessPressed = false
+    private var lastBrightnessZ: Double?
 
     func start() {
         guard !started else { return }
         started = true
-        configureHotspot()
+        configureHotspotIfNeeded()
         startConnectionIfNeeded()
         beginMotionUpdates()
     }
 
+    func requestResetAndReconnect() {
+        connectionQueue.async { [weak self] in
+            self?.pendingResetRequest = true
+        }
+        restartConnection()
+    }
+
     func restartConnection() {
+        configureHotspotIfNeeded()
         connectionQueue.async { [weak self] in
             guard let self = self else { return }
             self.connection?.cancel()
@@ -144,11 +240,29 @@ private final class MotionUDPManager: ObservableObject {
         startConnectionIfNeeded(delay: 0.5)
     }
 
-    private func configureHotspot() {
+    func setHueAdjustmentActive(_ active: Bool) {
+        hueHoldActive = active
+        if active {
+            brightnessHoldActive = false
+        }
+        updateAdjustmentState(hue: active, brightness: active ? false : nil)
+    }
+
+    func setBrightnessAdjustmentActive(_ active: Bool) {
+        brightnessHoldActive = active
+        if active {
+            hueHoldActive = false
+        }
+        updateAdjustmentState(hue: active ? false : nil, brightness: active)
+    }
+
+    private func configureHotspotIfNeeded() {
+        guard !hotspotConfigured else { return }
         guard #available(iOS 11.0, *) else {
-            updateStatus("Hotspot configuration unsupported")
+            updateStatus("Hotspot configuration unsupported", ready: false)
             return
         }
+        updateStatus("Joining \(Self.wifiSSID)…", ready: false)
 
         let configuration = NEHotspotConfiguration(
             ssid: Self.wifiSSID,
@@ -156,18 +270,22 @@ private final class MotionUDPManager: ObservableObject {
             isWEP: false
         )
         configuration.joinOnce = false
+
         NEHotspotConfigurationManager.shared.apply(configuration) { [weak self] error in
             guard let self = self else { return }
             if let nsError = error as NSError?,
                nsError.domain == NEHotspotConfigurationErrorDomain,
                let code = NEHotspotConfigurationError(rawValue: nsError.code),
                code == .alreadyAssociated {
+                self.hotspotConfigured = true
                 self.updateStatus("Already joined \(Self.wifiSSID)", ready: false)
                 return
             } else if let error = error {
+                self.hotspotConfigured = false
                 self.updateStatus("Hotspot error: \(error.localizedDescription)", ready: false)
                 return
             }
+            self.hotspotConfigured = true
             self.updateStatus("Hotspot joined \(Self.wifiSSID)", ready: false)
         }
     }
@@ -195,7 +313,9 @@ private final class MotionUDPManager: ObservableObject {
                 self.rollDegrees = roll
                 self.yawDegrees = yaw
             }
-            self.sendMotionPacket(deviceMotion)
+            if let adjustmentPayload = self.adjustmentPayload(for: deviceMotion) {
+                self.sendUDP(adjustmentPayload)
+            }
         }
     }
 
@@ -219,7 +339,11 @@ private final class MotionUDPManager: ObservableObject {
             switch state {
             case .ready:
                 self.connectionReady = true
-                self.updateStatus("UDP ready", ready: true)
+                self.updateStatus("Connected to \(Self.wifiSSID)", ready: true)
+                if self.pendingResetRequest {
+                    self.pendingResetRequest = false
+                    self.sendUDP("RESET")
+                }
             case .waiting(let error):
                 self.connectionReady = false
                 self.updateStatus("Waiting: \(error.localizedDescription)", ready: false)
@@ -237,17 +361,28 @@ private final class MotionUDPManager: ObservableObject {
         connection.start(queue: connectionQueue)
     }
 
-    private func sendMotionPacket(_ motion: CMDeviceMotion) {
+    private func adjustmentPayload(for motion: CMDeviceMotion) -> String? {
+        switch currentAdjustmentMode() {
+        case .none:
+            return nil
+        case .hue:
+            let delta = motion.rotationRate.z * 5.0
+            guard abs(delta) >= 0.05 else { return nil }
+            return String(format: "H,%.4f", delta)
+        case .brightness:
+            let delta = brightnessDelta(for: motion.gravity.z)
+            guard abs(delta) >= 0.002 else { return nil }
+            return String(format: "B,%.4f", delta)
+        }
+    }
+
+    private func sendUDP(_ payload: String) {
         guard connectionReady, let connection = connection else { return }
-        let payload = String(
-            format: "%.4f,%.4f,%.4f",
-            motion.attitude.pitch,
-            motion.attitude.roll,
-            motion.attitude.yaw
-        )
         guard let data = payload.data(using: .utf8) else { return }
         connectionQueue.async { [weak self] in
-            guard let self = self, self.connectionReady else { return }
+            guard let self = self,
+                  self.connectionReady,
+                  self.connection === connection else { return }
             connection.send(content: data, completion: .contentProcessed { sendError in
                 if let sendError = sendError {
                     self.connectionReady = false
@@ -255,6 +390,63 @@ private final class MotionUDPManager: ObservableObject {
                     self.startConnectionIfNeeded(delay: 1.0)
                 }
             })
+        }
+    }
+
+    func sendManualHue(_ degrees: Double) {
+        var normalized = degrees.truncatingRemainder(dividingBy: 360.0)
+        if normalized < 0 {
+            normalized += 360.0
+        }
+        let payload = String(format: "H_SET,%.4f", normalized)
+        sendUDP(payload)
+    }
+
+    func sendManualBrightness(_ percent: Double) {
+        let clamped = min(max(percent, 0.0), 100.0)
+        let payload = String(format: "B_SET,%.4f", clamped)
+        sendUDP(payload)
+    }
+
+    private func currentAdjustmentMode() -> AdjustmentMode {
+        adjustmentStateQueue.sync {
+            adjustmentMode
+        }
+    }
+
+    private func brightnessDelta(for gravityZ: Double) -> Double {
+        var delta = 0.0
+        adjustmentStateQueue.sync {
+            if let last = lastBrightnessZ {
+                delta = (gravityZ - last) * -0.7
+            }
+            lastBrightnessZ = gravityZ
+        }
+        return delta
+    }
+
+    private func updateAdjustmentState(hue: Bool? = nil, brightness: Bool? = nil) {
+        adjustmentStateQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            if let hueValue = hue {
+                self.huePressed = hueValue
+            }
+            if let brightnessValue = brightness {
+                self.brightnessPressed = brightnessValue
+                if brightnessValue {
+                    self.lastBrightnessZ = nil
+                }
+            }
+            if self.huePressed {
+                self.adjustmentMode = .hue
+            } else if self.brightnessPressed {
+                self.adjustmentMode = .brightness
+            } else {
+                self.adjustmentMode = .none
+            }
+            if !self.brightnessPressed {
+                self.lastBrightnessZ = nil
+            }
         }
     }
 
@@ -270,6 +462,26 @@ private final class MotionUDPManager: ObservableObject {
     deinit {
         motionManager.stopDeviceMotionUpdates()
         connection?.cancel()
+    }
+}
+
+private struct HoldAdjustmentButton: View {
+    let title: String
+    let active: Bool
+    let onHoldChanged: (Bool) -> Void
+
+    var body: some View {
+        Button(action: {}) {
+            Text(title)
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(active ? .accentColor : .gray)
+        .foregroundColor(.white)
+        .controlSize(.large)
+        .onLongPressGesture(minimumDuration: 0, pressing: onHoldChanged, perform: {})
     }
 }
 

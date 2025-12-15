@@ -8,28 +8,14 @@
 
 /* Begin PBXFileReference section */
 		6AB6A7852EF08659006EB823 /* WS2812 Controller.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "WS2812 Controller.app"; sourceTree = BUILT_PRODUCTS_DIR; };
-		D0F8E2A61B7F3E2B00000001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView.swift"; sourceTree = "<group>"; };
-		D0F8E2A61B7F3E2B00000002 /* WS2812_ControllerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "WS2812_ControllerApp.swift"; sourceTree = "<group>"; };
-		D0F8E2A61B7F3E2B00000003 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = "Assets.xcassets"; path = "Assets.xcassets"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXBuildFile section */
-		D0F8E2A61B7F3E2D00000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F8E2A61B7F3E2B00000001; };
-		D0F8E2A61B7F3E2D00000002 /* WS2812_ControllerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F8E2A61B7F3E2B00000002; };
-		D0F8E2A61B7F3E2D00000003 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D0F8E2A61B7F3E2B00000003; };
-/* End PBXBuildFile section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-	6AB6A7872EF08659006EB823 /* WS2812 Controller */ = {
-		isa = PBXFileSystemSynchronizedRootGroup;
-		path = "WS2812 Controller";
-		sourceTree = "<group>";
-		children = (
-			D0F8E2A61B7F3E2B00000002 /* WS2812_ControllerApp.swift */,
-			D0F8E2A61B7F3E2B00000001 /* ContentView.swift */,
-			D0F8E2A61B7F3E2B00000003 /* Assets.xcassets */,
-		);
-	};
+		6AB6A7872EF08659006EB823 /* WS2812 Controller */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "WS2812 Controller";
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,24 +104,21 @@
 		};
 /* End PBXProject section */
 
-	/* Begin PBXResourcesBuildPhase section */
+/* Begin PBXResourcesBuildPhase section */
 		6AB6A7832EF08659006EB823 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D0F8E2A61B7F3E2D00000003 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
-	/* Begin PBXSourcesBuildPhase section */
+/* Begin PBXSourcesBuildPhase section */
 		6AB6A7812EF08659006EB823 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				D0F8E2A61B7F3E2D00000001 /* ContentView.swift in Sources */,
-				D0F8E2A61B7F3E2D00000002 /* WS2812_ControllerApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -253,6 +236,8 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
@@ -260,8 +245,6 @@
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 			};
 			name = Release;
 		};
@@ -270,11 +253,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = WS2812_Controller.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4N2YZ7T75B;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Provides the UDP path to the PSL_UDP strip once the hotspot is connected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -294,8 +281,6 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
-				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 			};
 			name = Debug;
 		};
@@ -304,11 +289,15 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = WS2812_Controller.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 4N2YZ7T75B;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Provides the UDP path to the PSL_UDP strip once the hotspot is connected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Needed to automatically join the PSL_UDP hotspot.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Motion data drives the LEDs.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

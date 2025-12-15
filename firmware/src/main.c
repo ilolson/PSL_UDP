@@ -7,7 +7,7 @@
 /* Define the CYW43 architecture header before pulling in the SDK headers */
 #define PICO_CYW43_ARCH_HEADER pico/cyw43_arch/arch_threadsafe_background.h
 
-#define LED_PIN 2
+#define LED_PIN 0
 #define NUM_LEDS 16
 #define UDP_PORT 4210
 #define PACKET_BUFFER 128
@@ -15,11 +15,15 @@
 #define AP_PASSWORD "psludp123"
 #define AUTH_TYPE CYW43_AUTH_WPA2_AES_PSK
 
+#define MIN_BRIGHTNESS_NORMALIZED 0.05f
+#define MAX_BRIGHTNESS_NORMALIZED (100.0f / 255.0f)
+
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
+#include "hardware/watchdog.h"
 
 #include "lwipopts.h"
 #include "lwip/inet.h"
@@ -106,18 +110,88 @@ static void ws2812_write_color(uint32_t grb) {
     }
 }
 
+static float current_hue = 210.0f;
+static float current_saturation = 0.5f;
+static float current_brightness = 0.5f;
+static float hue_offset = 0.0f;
+static float brightness_offset = 0.0f;
+
+static void render_color_from_state(void) {
+    float adjusted_hue = fmodf(current_hue + hue_offset, 360.0f);
+    if (adjusted_hue < 0.0f) {
+        adjusted_hue += 360.0f;
+    }
+    float adjusted_brightness = clampf(
+        current_brightness + brightness_offset,
+        MIN_BRIGHTNESS_NORMALIZED,
+        MAX_BRIGHTNESS_NORMALIZED
+    );
+
+    uint8_t r, g, b;
+    hsv_to_rgb(adjusted_hue, current_saturation, adjusted_brightness, &r, &g, &b);
+    uint32_t color = ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;
+    ws2812_write_color(color);
+}
+
+static void set_hue(float degrees) {
+    float normalized = fmodf(degrees, 360.0f);
+    if (normalized < 0.0f) {
+        normalized += 360.0f;
+    }
+    current_hue = normalized;
+    hue_offset = 0.0f;
+    render_color_from_state();
+}
+
+static void set_brightness(float percent) {
+    float normalized = percent / 100.0f;
+    current_brightness = clampf(
+        normalized,
+        MIN_BRIGHTNESS_NORMALIZED,
+        MAX_BRIGHTNESS_NORMALIZED
+    );
+    brightness_offset = 0.0f;
+    render_color_from_state();
+}
+
+static void reset_system(void) {
+    watchdog_reboot(0, 0, 0);
+}
+
 static void render_motion_color(float pitch, float roll, float yaw) {
     float norm_roll = clampf((roll + 3.14159f) / (2.0f * 3.14159f), 0.0f, 1.0f);
     float norm_yaw = clampf((yaw + 3.14159f) / (2.0f * 3.14159f), 0.0f, 1.0f);
     float norm_pitch = clampf((pitch + (3.14159f / 2.0f)) / 3.14159f, 0.0f, 1.0f);
     float hue = fmodf(norm_yaw * 360.0f + norm_roll * 120.0f, 360.0f);
     float saturation = clampf(0.35f + norm_roll * 0.65f, 0.2f, 1.0f);
-    float brightness = clampf(0.2f + norm_pitch * 0.8f, 0.05f, 1.0f);
+    float brightness = clampf(
+        0.2f + norm_pitch * 0.8f,
+        MIN_BRIGHTNESS_NORMALIZED,
+        MAX_BRIGHTNESS_NORMALIZED
+    );
 
-    uint8_t r, g, b;
-    hsv_to_rgb(hue, saturation, brightness, &r, &g, &b);
-    uint32_t color = ((uint32_t)g << 16) | ((uint32_t)r << 8) | b;
-    ws2812_write_color(color);
+    current_hue = hue;
+    current_saturation = saturation;
+    current_brightness = brightness;
+    render_color_from_state();
+}
+
+static void adjust_hue(float delta) {
+    hue_offset = fmodf(hue_offset + delta, 360.0f);
+    if (hue_offset < 0.0f) {
+        hue_offset += 360.0f;
+    }
+    render_color_from_state();
+}
+
+static void adjust_brightness(float delta) {
+    float desired = clampf(
+        current_brightness + brightness_offset + delta,
+        MIN_BRIGHTNESS_NORMALIZED,
+        MAX_BRIGHTNESS_NORMALIZED
+    );
+    brightness_offset = desired - current_brightness;
+    render_color_from_state();
 }
 
 static void handle_motion_packet(const char *packet, size_t len) {
@@ -129,6 +203,27 @@ static void handle_motion_packet(const char *packet, size_t len) {
     float pitch = 0.0f;
     float roll = 0.0f;
     float yaw = 0.0f;
+    float delta = 0.0f;
+    if (strncmp(buffer, "RESET", 5) == 0) {
+        reset_system();
+        return;
+    }
+    if (sscanf(buffer, "H_SET,%f", &delta) == 1) {
+        set_hue(delta);
+        return;
+    }
+    if (sscanf(buffer, "B_SET,%f", &delta) == 1) {
+        set_brightness(delta);
+        return;
+    }
+    if (sscanf(buffer, "H,%f", &delta) == 1) {
+        adjust_hue(delta);
+        return;
+    }
+    if (sscanf(buffer, "B,%f", &delta) == 1) {
+        adjust_brightness(delta);
+        return;
+    }
     if (sscanf(buffer, "%f,%f,%f", &pitch, &roll, &yaw) == 3) {
         render_motion_color(pitch, roll, yaw);
     }
@@ -189,12 +284,17 @@ int main(void) {
     dhcp_server_init(&lease_server, &ap_ip, &ap_mask);
 
     ws2812_init();
-    ws2812_write_color(0x00102040);
+    render_color_from_state();
 
     printf("Access point %s ready. Send UDP to 192.168.4.1:%d\n", AP_SSID, UDP_PORT);
     start_udp_listener();
 
-    dhcp_server_deinit(&lease_server);
-    cyw43_arch_deinit();
+    while (true) {
+        tight_loop_contents();
+        sleep_ms(1000);
+    }
+
+    // unreachable but keeps compilers happy
+    (void)lease_server;
     return 0;
 }
