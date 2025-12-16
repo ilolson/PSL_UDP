@@ -12,11 +12,11 @@ import CoreBluetooth
 private let serviceUUID = CBUUID(string: "21436587-A9CB-ED0F-1032-547698BADCFE")
 private let commandCharacteristicUUID = CBUUID(string: "0C1D2E3F-4051-6273-8495-A6B7C8D9EAFB")
 private let maxLights = 300
-private let bleDeviceName = "PSL Motion"
-private let bleShortName = "PSL Mtn"
+private let bleDeviceName = "PSL"
+private let bleShortName = "PSL"
 
 final class BLEManager: NSObject, ObservableObject {
-    @Published var status: String = "scanning for PSL Motion"
+    @Published var status: String = "scanning"
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -126,7 +126,7 @@ extension BLEManager: CBPeripheralDelegate {
         guard let characteristics = service.characteristics else { return }
         for characteristic in characteristics where characteristic.uuid == commandCharacteristicUUID {
             commandCharacteristic = characteristic
-            status = "connected to PSL Motion"
+            status = "connected"
             return
         }
     }
