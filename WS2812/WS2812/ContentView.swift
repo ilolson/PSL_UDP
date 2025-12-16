@@ -8,7 +8,6 @@
 import SwiftUI
 import Combine
 import CoreBluetooth
-import CoreMotion
 
 private let serviceUUID = CBUUID(string: "21436587-A9CB-ED0F-1032-547698BADCFE")
 private let commandCharacteristicUUID = CBUUID(string: "0C1D2E3F-4051-6273-8495-A6B7C8D9EAFB")
@@ -36,7 +35,8 @@ final class BLEManager: NSObject, ObservableObject {
             return
         }
         let data = Data(text.utf8)
-        peripheral.writeValue(data, for: characteristic, type: .withoutResponse)
+        let writeType: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse) ? .withoutResponse : .withResponse
+        peripheral.writeValue(data, for: characteristic, type: writeType)
     }
 }
 
@@ -132,42 +132,10 @@ extension BLEManager: CBPeripheralDelegate {
     }
 }
 
-final class MotionManager: ObservableObject {
-    @Published var yaw: Double = 0
-    @Published var pitch: Double = 0
-    @Published var roll: Double = 0
-
-    private let motion = CMMotionManager()
-    private let queue = OperationQueue()
-
-    init() {
-        motion.deviceMotionUpdateInterval = 1.0 / 30.0
-        motion.startDeviceMotionUpdates(to: queue) { [weak self] motion, _ in
-            guard let motion = motion else { return }
-            DispatchQueue.main.async {
-                self?.yaw = motion.attitude.yaw
-                self?.pitch = motion.attitude.pitch
-                self?.roll = motion.attitude.roll
-            }
-        }
-    }
-
-    deinit {
-        motion.stopDeviceMotionUpdates()
-    }
-}
-
 struct ContentView: View {
     @StateObject private var bleManager = BLEManager()
-    @StateObject private var motionManager = MotionManager()
-
-    @State private var holdingHue = false
-    @State private var holdingBrightness = false
-    @State private var holdingStart = false
-    @State private var holdingEnd = false
-
-    @State private var lastHueSent: Double?
-    @State private var lastBrightnessSent: Double?
+    @State private var hue: Double = 0
+    @State private var brightness: Double = 50
     @State private var segmentStart = 1
     @State private var segmentEnd = maxLights
 
@@ -177,101 +145,90 @@ struct ContentView: View {
                 .font(.headline)
 
             VStack(spacing: 8) {
-                Text(String(format: "Hue: %.0f°", lastHueSent ?? 0))
-                Text(String(format: "Brightness: %.0f%%", lastBrightnessSent ?? 50))
+                Text(String(format: "Hue: %.0f°", hue))
+                Text(String(format: "Brightness: %.0f%%", brightness))
                 Text("Segment: \(segmentStart) … \(segmentEnd)")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
-            Grid(alignment: .center, horizontalSpacing: 12, verticalSpacing: 12) {
-                GridRow {
-                    holdButton(title: "Hue", isActive: holdingHue, action: { holdingHue = $0 })
-                    holdButton(title: "Brightness", isActive: holdingBrightness, action: { holdingBrightness = $0 })
-                }
-                GridRow {
-                    holdButton(title: "Start Endpoint", isActive: holdingStart, action: { holdingStart = $0 })
-                    holdButton(title: "End Endpoint", isActive: holdingEnd, action: { holdingEnd = $0 })
-                }
-            }
-            .padding(.horizontal)
+            sliderView(
+                title: "Hue",
+                value: $hue,
+                range: 0...360,
+                format: "%.0f°",
+                onChange: { sendHue($0) }
+            )
+
+            sliderView(
+                title: "Brightness",
+                value: $brightness,
+                range: 0...100,
+                format: "%.0f%%",
+                onChange: { sendBrightness($0) }
+            )
+
+            sliderView(
+                title: "Segment Start",
+                value: Binding(
+                    get: { Double(segmentStart) },
+                    set: { updateSegmentStart(Int($0.rounded())) }
+                ),
+                range: 1...Double(maxLights),
+                format: "%.0f",
+                onChange: { _ in }
+            )
+
+            sliderView(
+                title: "Segment End",
+                value: Binding(
+                    get: { Double(segmentEnd) },
+                    set: { updateSegmentEnd(Int($0.rounded())) }
+                ),
+                range: 1...Double(maxLights),
+                format: "%.0f",
+                onChange: { _ in }
+            )
         }
         .padding()
-        .onChange(of: motionManager.yaw) { _, newValue in
-            updateHue(with: newValue)
-            updateSegmentStart(with: newValue)
-        }
-        .onChange(of: motionManager.pitch) { _, newValue in
-            updateBrightness(with: newValue)
-        }
-        .onChange(of: motionManager.roll) { _, newValue in
-            updateSegmentEnd(with: newValue)
-        }
     }
 
-    private func holdButton(title: String, isActive: Bool, action: @escaping (Bool) -> Void) -> some View {
-        Button(action: {}) {
-            Text(title)
-                .bold()
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(isActive ? Color.blue.opacity(0.8) : Color.gray.opacity(0.2))
-                .cornerRadius(12)
+    private func sliderView(title: String, value: Binding<Double>, range: ClosedRange<Double>, format: String, onChange: @escaping (Double) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(title): \(String(format: format, value.wrappedValue))")
+                .fontWeight(.semibold)
+            Slider(value: value, in: range)
+                .onChange(of: value.wrappedValue) { _, newValue in
+                    onChange(newValue)
+                }
         }
-        .onLongPressGesture(minimumDuration: 0.05, pressing: { pressing in
-            action(pressing)
-        }, perform: {})
+        .padding(.horizontal)
     }
 
-    private func updateHue(with yaw: Double) {
-        guard holdingHue else { return }
-        let normalized = normalize(yaw, from: -.pi, to: .pi)
-        let hue = normalized * 360
-        if lastHueSent == nil || abs(hue - lastHueSent!) >= 0.3 {
-            lastHueSent = hue
-            bleManager.sendCommand(String(format: "H_SET,%.1f", hue))
-        }
+    private func sendHue(_ value: Double) {
+        bleManager.sendCommand(String(format: "H_SET,%.1f", value))
     }
 
-    private func updateBrightness(with pitch: Double) {
-        guard holdingBrightness else { return }
-        let normalized = normalize(pitch, from: -.pi / 2, to: .pi / 2)
-        let brightness = normalized * 100
-        if lastBrightnessSent == nil || abs(brightness - (lastBrightnessSent ?? brightness)) >= 0.2 {
-            lastBrightnessSent = brightness
-            bleManager.sendCommand(String(format: "B_SET,%.1f", brightness))
-        }
+    private func sendBrightness(_ value: Double) {
+        bleManager.sendCommand(String(format: "B_SET,%.1f", value))
     }
 
-    private func updateSegmentStart(with yaw: Double) {
-        guard holdingStart else { return }
-        let normalized = normalize(yaw, from: -.pi, to: .pi)
-        let index = max(1, min(maxLights, Int(round(normalized * Double(maxLights - 1))) + 1))
-        guard index != segmentStart else { return }
-        segmentStart = index
-        bleManager.sendCommand("SEG_START,\(segmentStart)")
+    private func updateSegmentStart(_ value: Int) {
+        let clamped = max(1, min(value, maxLights))
+        segmentStart = clamped
         if segmentEnd < segmentStart {
             segmentEnd = segmentStart
-            bleManager.sendCommand("SEG_END,\(segmentEnd)")
         }
+        bleManager.sendCommand("SEG_START,\(segmentStart)")
     }
 
-    private func updateSegmentEnd(with roll: Double) {
-        guard holdingEnd else { return }
-        let normalized = normalize(roll, from: -.pi, to: .pi)
-        let index = max(1, min(maxLights, Int(round(normalized * Double(maxLights - 1))) + 1))
-        guard index != segmentEnd else { return }
-        segmentEnd = index
-        bleManager.sendCommand("SEG_END,\(segmentEnd)")
+    private func updateSegmentEnd(_ value: Int) {
+        let clamped = max(1, min(value, maxLights))
+        segmentEnd = clamped
         if segmentStart > segmentEnd {
             segmentStart = segmentEnd
-            bleManager.sendCommand("SEG_START,\(segmentStart)")
         }
-    }
-
-    private func normalize(_ value: Double, from lower: Double, to upper: Double) -> Double {
-        let clamped = min(max(value, lower), upper)
-        return (clamped - lower) / (upper - lower)
+        bleManager.sendCommand("SEG_END,\(segmentEnd)")
     }
 }
 

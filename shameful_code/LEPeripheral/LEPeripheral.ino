@@ -2,6 +2,7 @@
 #include <Adafruit_NeoPixel.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(ARDUINO_ARCH_RP2040)
@@ -15,18 +16,16 @@ constexpr uint8_t kPacketBuffer = 128;
 constexpr uint8_t kBluetoothDataTypeFlags = 0x01;
 constexpr uint8_t kBluetoothDataTypeComplete128BitUUIDs = 0x07;
 constexpr uint8_t kBluetoothDataTypeCompleteLocalName = 0x09;
-constexpr float kMinBrightness = 0.05f;
+constexpr float kMinBrightness = 0.0f;
 constexpr float kMaxBrightness = 1.0f;
 constexpr float kDefaultHue = 25.0f;
 constexpr float kDefaultSaturation = 1.0f;
 constexpr float kDefaultBrightness = 125.0f / 255.0f;
-constexpr uint16_t kCommandCharacteristicId = 1;
-
 #ifndef PSL_LED_PIN
 #define PSL_LED_PIN 0
 #endif
 
-const char kBleDeviceName[] = "PSL Motion";
+const char kBleDeviceName[] = "PSL";
 constexpr size_t kDeviceNameMaxLen = sizeof(kBleDeviceName) + 4;
 
 const uint8_t kServiceUuid[16] = {
@@ -226,65 +225,122 @@ void reset_system() {
 #endif
 }
 
+bool parse_prefixed_float(const char *buffer, const char *prefix, float *value) {
+    const size_t prefix_len = strlen(prefix);
+    if (strncmp(buffer, prefix, prefix_len) != 0) {
+        return false;
+    }
+    const char *start = buffer + prefix_len;
+    char *end_ptr = nullptr;
+    float parsed = strtof(start, &end_ptr);
+    if (end_ptr == start) {
+        return false;
+    }
+    *value = parsed;
+    return true;
+}
+
+bool parse_segment_command(const char *buffer, const char *prefix, uint32_t *index) {
+    const size_t prefix_len = strlen(prefix);
+    if (strncmp(buffer, prefix, prefix_len) != 0) {
+        return false;
+    }
+    const char *start = buffer + prefix_len;
+    char *end_ptr = nullptr;
+    unsigned long parsed = strtoul(start, &end_ptr, 10);
+    if (end_ptr == start) {
+        return false;
+    }
+    *index = static_cast<uint32_t>(parsed);
+    return true;
+}
+
+bool parse_motion_triplet(const char *buffer, float *pitch, float *roll, float *yaw) {
+    char *end_ptr = nullptr;
+    *pitch = strtof(buffer, &end_ptr);
+    if (end_ptr == buffer || *end_ptr != ',') {
+        return false;
+    }
+    const char *next = end_ptr + 1;
+    *roll = strtof(next, &end_ptr);
+    if (end_ptr == next || *end_ptr != ',') {
+        return false;
+    }
+    next = end_ptr + 1;
+    *yaw = strtof(next, &end_ptr);
+    return end_ptr != next;
+}
+
+void configure_random_address() {
+    uint8_t addr[6];
+    for (size_t i = 0; i < 6; ++i) {
+        addr[i] = static_cast<uint8_t>(random(0, 256));
+    }
+    addr[5] = (addr[5] & 0x3F) | 0xC0;
+    BTstack.setPublicBdAddr(addr);
+    Serial.printf(
+        "Using random static addr %02X:%02X:%02X:%02X:%02X:%02X\n",
+        addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]
+    );
+}
+
 void handle_motion_packet(const char *packet, size_t len) {
     char buffer[kPacketBuffer] = {};
     size_t copy_len = len < sizeof(buffer) - 1 ? len : sizeof(buffer) - 1;
     memcpy(buffer, packet, copy_len);
     buffer[copy_len] = '\0';
 
-    float pitch = 0.0f;
-    float roll = 0.0f;
-    float yaw = 0.0f;
-    float delta = 0.0f;
     if (strncmp(buffer, "RESET", 5) == 0) {
         Serial.println("Reset command received.");
         delay(50);
         reset_system();
         return;
     }
-    if (sscanf(buffer, "H_SET,%f", &delta) == 1) {
-        set_hue(delta);
+
+    float value = 0.0f;
+    if (parse_prefixed_float(buffer, "H_SET,", &value)) {
+        set_hue(value);
         return;
     }
-    if (sscanf(buffer, "B_SET,%f", &delta) == 1) {
-        set_brightness(delta);
+    if (parse_prefixed_float(buffer, "B_SET,", &value)) {
+        set_brightness(value);
         return;
     }
-    if (sscanf(buffer, "H,%f", &delta) == 1) {
-        adjust_hue(delta);
+    if (parse_prefixed_float(buffer, "H,", &value)) {
+        adjust_hue(value);
         return;
     }
-    if (sscanf(buffer, "B,%f", &delta) == 1) {
-        adjust_brightness(delta);
+    if (parse_prefixed_float(buffer, "B,", &value)) {
+        adjust_brightness(value);
         return;
     }
-    unsigned long segment_idx = 0;
-    if (sscanf(buffer, "SEG_START,%lu", &segment_idx) == 1) {
-        set_segment_start(segment_idx > 0 ? segment_idx - 1 : 0);
+
+    uint32_t index = 0;
+    if (parse_segment_command(buffer, "SEG_START,", &index)) {
+        set_segment_start(index > 0 ? index - 1 : 0);
         return;
     }
-    if (sscanf(buffer, "SEG_END,%lu", &segment_idx) == 1) {
-        set_segment_end(segment_idx > 0 ? segment_idx - 1 : 0);
+    if (parse_segment_command(buffer, "SEG_END,", &index)) {
+        set_segment_end(index > 0 ? index - 1 : 0);
         return;
     }
-    if (sscanf(buffer, "%f,%f,%f", &pitch, &roll, &yaw) == 3) {
+
+    float pitch = 0.0f;
+    float roll = 0.0f;
+    float yaw = 0.0f;
+    if (parse_motion_triplet(buffer, &pitch, &roll, &yaw)) {
         render_motion_color(pitch, roll, yaw);
         return;
     }
+
     Serial.print("Unrecognized BLE packet: ");
     Serial.println(buffer);
 }
 
 void update_device_name_suffix() {
-    uint16_t suffix = static_cast<uint16_t>(random(0x10000));
-    int written = snprintf(device_name, sizeof(device_name), "%s-%04X", kBleDeviceName, suffix);
-    if (written <= 0) {
-        strncpy(device_name, kBleDeviceName, sizeof(device_name) - 1);
-        device_name[sizeof(device_name) - 1] = '\0';
-        device_name_len = strlen(device_name);
-        return;
-    }
-    device_name_len = static_cast<size_t>(written);
+    strncpy(device_name, kBleDeviceName, sizeof(device_name) - 1);
+    device_name[sizeof(device_name) - 1] = '\0';
+    device_name_len = strlen(device_name);
 }
 
 void copy_uuid_le(uint8_t *dest, const uint8_t *uuid) {
@@ -340,11 +396,7 @@ void deviceDisconnectedCallback(BLEDevice *device) {
 }
 
 int gattWriteCallback(uint16_t characteristic_id, uint8_t *buffer, uint16_t size) {
-    if (characteristic_id != kCommandCharacteristicId) {
-        Serial.print("Unexpected characteristic write id ");
-        Serial.println(characteristic_id);
-        return ATT_ERROR_ATTRIBUTE_NOT_FOUND;
-    }
+    (void)characteristic_id;
     if (!buffer || size == 0) {
         return 0;
     }
@@ -358,17 +410,38 @@ int gattWriteCallback(uint16_t characteristic_id, uint8_t *buffer, uint16_t size
     return 0;
 }
 
+void add_gap_service() {
+    BTstack.addGATTService(new UUID("1800"));
+    BTstack.addGATTCharacteristic(
+        new UUID("2A00"),
+        ATT_PROPERTY_READ,
+        reinterpret_cast<uint8_t *>(device_name),
+        static_cast<uint16_t>(device_name_len)
+    );
+    static uint8_t appearance_value[2] = {0x00, 0x00};
+    BTstack.addGATTCharacteristic(
+        new UUID("2A01"),
+        ATT_PROPERTY_READ,
+        appearance_value,
+        sizeof(appearance_value)
+    );
+}
+
 void init_ble() {
     update_device_name_suffix();
     BTstack.setBLEDeviceConnectedCallback(deviceConnectedCallback);
     BTstack.setBLEDeviceDisconnectedCallback(deviceDisconnectedCallback);
     BTstack.setGATTCharacteristicWrite(gattWriteCallback);
+    BTstack.enablePacketLogger();
+    BTstack.enableDebugLogger();
+    configure_random_address();
 
+    add_gap_service();
     BTstack.addGATTService(new UUID("21436587-A9CB-ED0F-1032-547698BADCFE"));
     BTstack.addGATTCharacteristicDynamic(
         new UUID("0C1D2E3F-4051-6273-8495-A6B7C8D9EAFB"),
-        ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
-        kCommandCharacteristicId
+        ATT_PROPERTY_READ | ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
+        0
     );
 
     BTstack.setup(device_name);
