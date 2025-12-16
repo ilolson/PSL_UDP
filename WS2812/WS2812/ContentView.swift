@@ -13,6 +13,7 @@ private let serviceUUID = CBUUID(string: "21436587-A9CB-ED0F-1032-547698BADCFE")
 private let commandCharacteristicUUID = CBUUID(string: "0C1D2E3F-4051-6273-8495-A6B7C8D9EAFB")
 private let maxLights = 300
 private let frameCommandId: UInt8 = 0xA0
+private let rainbowCommandId: UInt8 = 0xA1
 private let bleDeviceName = "PSL"
 private let bleShortName = "PSL"
 
@@ -144,6 +145,12 @@ struct ContentView: View {
     @State private var segmentCenter = (maxLights / 2) + 1
     @State private var segmentStart = 1
     @State private var segmentEnd = maxLights
+    @State private var rainbowEnabled = false
+    @State private var rainbowPhase: Double = 0
+    @State private var rainbowTimer: AnyCancellable?
+    @State private var lastRainbowTimestamp: TimeInterval = 0
+    private let rainbowLength: Double = 300
+    private let rainbowCycleRate: Double = 0.1
 
     var body: some View {
         VStack(spacing: 24) {
@@ -158,13 +165,27 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
-            sliderView(
-                title: "Hue",
-                value: $hue,
-                range: 0...360,
-                format: "%.0f°",
-                onChange: { _ in sendFrame() }
-            )
+            Toggle("Rainbow Mode", isOn: $rainbowEnabled)
+                .onChange(of: rainbowEnabled) { _, newValue in
+                    if newValue {
+                        startRainbowTimer()
+                        sendRainbowFrame()
+                    } else {
+                        stopRainbowTimer()
+                        sendFrame()
+                    }
+                }
+                .padding(.horizontal)
+
+            if !rainbowEnabled {
+                sliderView(
+                    title: "Hue",
+                    value: $hue,
+                    range: 0...360,
+                    format: "%.0f°",
+                    onChange: { _ in sendFrame() }
+                )
+            }
 
             sliderView(
                 title: "Brightness",
@@ -201,6 +222,8 @@ struct ContentView: View {
                 .padding(.top, 8)
         }
         .padding()
+        .onAppear(perform: startRainbowTimerIfNeeded)
+        .onDisappear(perform: stopRainbowTimer)
     }
 
     private func sliderView(title: String, value: Binding<Double>, range: ClosedRange<Double>, format: String, onChange: @escaping (Double) -> Void) -> some View {
@@ -216,6 +239,10 @@ struct ContentView: View {
     }
 
     private func sendFrame() {
+        if rainbowEnabled {
+            sendRainbowFrame()
+            return
+        }
         guard let payload = currentFramePayload() else { return }
         bleManager.sendPacket(payload)
     }
@@ -267,6 +294,17 @@ struct ContentView: View {
         return LEDFrame(runs: runs).dataPayload()
     }
 
+    private func sendRainbowFrame() {
+        guard let payload = rainbowPayload() else { return }
+        bleManager.sendPacket(payload)
+    }
+
+    private func rainbowPayload() -> Data? {
+        let runs = buildRainbowRuns()
+        guard !runs.isEmpty else { return nil }
+        return LEDFrame(runs: runs).dataPayload()
+    }
+
     private func buildCurrentRuns() -> [LEDFrameRun] {
         guard maxLights > 0 else { return [] }
         let clampedStart = max(1, min(segmentStart, maxLights))
@@ -290,6 +328,112 @@ struct ContentView: View {
         }
 
         return runs
+    }
+
+    private func buildRainbowRuns() -> [LEDFrameRun] {
+        guard maxLights > 0 else { return [] }
+        let clampedStart = max(1, min(segmentStart, maxLights))
+        let clampedEnd = max(clampedStart, min(segmentEnd, maxLights))
+        var runs: [LEDFrameRun] = []
+        var cursor = UInt16(0)
+
+        if clampedStart > 1 {
+            let leadingLength = UInt16(clampedStart - 1)
+            runs.append(LEDFrameRun(start: cursor, length: leadingLength, color: .off))
+            cursor &+= leadingLength
+        }
+
+        let activeLength = UInt16(clampedEnd - clampedStart + 1)
+        if activeLength > 0 {
+            let gradientRuns = rainbowGradientRuns(length: activeLength, offset: cursor)
+            runs.append(contentsOf: gradientRuns)
+            cursor &+= activeLength
+        }
+
+        if clampedEnd < maxLights {
+            let trailingLength = UInt16(maxLights - clampedEnd)
+            runs.append(LEDFrameRun(start: cursor, length: trailingLength, color: .off))
+        }
+
+        return runs
+    }
+
+    private func rainbowGradientRuns(length: UInt16, offset: UInt16) -> [LEDFrameRun] {
+        let activeLength = Int(length)
+        guard activeLength > 0 else { return [] }
+        let maxRainbowRuns = 50
+        let runCount = max(1, min(activeLength, maxRainbowRuns))
+        var remaining = activeLength
+        var consumed = 0
+        var gradientRuns: [LEDFrameRun] = []
+
+        for index in 0..<runCount {
+            let bucketsLeft = runCount - index
+            var chunkLength = max(1, remaining / bucketsLeft)
+            if index == runCount - 1 {
+                chunkLength = remaining
+            }
+            let chunkStart = consumed
+            consumed += chunkLength
+            remaining -= chunkLength
+
+            let midpoint = Double(chunkStart) + Double(chunkLength) / 2.0
+            let cyclePosition = (midpoint / max(1.0, rainbowLength)) + rainbowPhase
+            let hue = (cyclePosition.truncatingRemainder(dividingBy: 1.0) + 1.0)
+                .truncatingRemainder(dividingBy: 1.0) * 360.0
+            let color = hsvToRGB(
+                hue: hue,
+                saturation: 1.0,
+                value: max(0.0, min(1.0, brightness / 100.0))
+            )
+            gradientRuns.append(
+                LEDFrameRun(
+                    start: offset &+ UInt16(chunkStart),
+                    length: UInt16(chunkLength),
+                    color: color
+                )
+            )
+        }
+
+        return gradientRuns
+    }
+
+    private func startRainbowTimerIfNeeded() {
+        if rainbowEnabled {
+            startRainbowTimer()
+        }
+    }
+
+    private func startRainbowTimer() {
+        stopRainbowTimer()
+        resetRainbowTimestamp()
+        rainbowTimer = Timer.publish(every: 1.0 / 30.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { _ in
+                tickRainbowPhase()
+            }
+    }
+
+    private func stopRainbowTimer() {
+        rainbowTimer?.cancel()
+        rainbowTimer = nil
+    }
+
+    private func resetRainbowTimestamp() {
+        lastRainbowTimestamp = ProcessInfo.processInfo.systemUptime
+    }
+
+    private func tickRainbowPhase() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let delta = max(0, now - lastRainbowTimestamp)
+        lastRainbowTimestamp = now
+        guard delta > 0 else {
+            sendRainbowFrame()
+            return
+        }
+        let nextPhase = rainbowPhase + delta * rainbowCycleRate
+        rainbowPhase = nextPhase - floor(nextPhase)
+        sendRainbowFrame()
     }
 
     private func currentActiveColor() -> LEDColor {
