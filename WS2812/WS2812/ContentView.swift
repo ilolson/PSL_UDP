@@ -134,8 +134,8 @@ extension BLEManager: CBPeripheralDelegate {
 
 struct ContentView: View {
     @StateObject private var bleManager = BLEManager()
-    @State private var hue: Double = 0
-    @State private var brightness: Double = 50
+    @State private var hue: Double = 25
+    @State private var brightness: Double = 15
     @State private var segmentStart = 1
     @State private var segmentEnd = maxLights
 
@@ -189,6 +189,10 @@ struct ContentView: View {
                 format: "%.0f",
                 onChange: { _ in }
             )
+
+            Button("Send All Settings", action: sendAllSettings)
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 8)
         }
         .padding()
     }
@@ -211,6 +215,13 @@ struct ContentView: View {
 
     private func sendBrightness(_ value: Double) {
         bleManager.sendCommand(String(format: "B_SET,%.1f", value))
+    }
+
+    private func sendAllSettings() {
+        sendHue(hue)
+        sendBrightness(brightness)
+        bleManager.sendCommand("SEG_START,\(segmentStart)")
+        bleManager.sendCommand("SEG_END,\(segmentEnd)")
     }
 
     private func updateSegmentStart(_ value: Int) {
