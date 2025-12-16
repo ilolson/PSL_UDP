@@ -25,6 +25,8 @@ constexpr float kDefaultBrightness = 125.0f / 255.0f;
 #define PSL_LED_PIN 0
 #endif
 
+constexpr uint8_t kFrameCommandId = 0xA0;
+
 const char kBleDeviceName[] = "PSL";
 constexpr size_t kDeviceNameMaxLen = sizeof(kBleDeviceName) + 4;
 
@@ -42,6 +44,9 @@ float current_saturation = kDefaultSaturation;
 float current_brightness = kDefaultBrightness;
 float hue_offset = 0.0f;
 float brightness_offset = 0.0f;
+
+bool parse_frame_packet(const uint8_t *data, size_t len);
+void apply_frame_run(uint16_t start, uint16_t length, uint8_t r, uint8_t g, uint8_t b);
 
 char device_name[kDeviceNameMaxLen + 1] = {};
 size_t device_name_len = 0;
@@ -337,6 +342,51 @@ void handle_motion_packet(const char *packet, size_t len) {
     Serial.println(buffer);
 }
 
+void apply_frame_run(uint16_t start, uint16_t length, uint8_t r, uint8_t g, uint8_t b) {
+    if (length == 0) {
+        return;
+    }
+    const uint16_t end = start + length;
+    uint32_t color = strip.Color(r, g, b);
+    for (uint16_t i = start; i < end && i < kLedCount; ++i) {
+        strip.setPixelColor(i, color);
+    }
+}
+
+bool parse_frame_packet(const uint8_t *data, size_t length) {
+    if (!data || length < 3) {
+        return false;
+    }
+    if (data[0] != kFrameCommandId) {
+        return false;
+    }
+    if (data[1] != 1) {
+        Serial.println("Unsupported frame version");
+        return true;
+    }
+
+    const uint8_t run_count = data[2];
+    size_t offset = 3;
+    for (uint8_t i = 0; i < run_count; ++i) {
+        if (offset + 7 > length) {
+            Serial.println("Frame truncated");
+            break;
+        }
+
+        uint16_t start = static_cast<uint16_t>(data[offset] | (data[offset + 1] << 8));
+        offset += 2;
+        uint16_t run_length = static_cast<uint16_t>(data[offset] | (data[offset + 1] << 8));
+        offset += 2;
+        uint8_t r = data[offset++];
+        uint8_t g = data[offset++];
+        uint8_t b = data[offset++];
+        apply_frame_run(start, run_length, r, g, b);
+    }
+
+    strip.show();
+    return true;
+}
+
 void update_device_name_suffix() {
     strncpy(device_name, kBleDeviceName, sizeof(device_name) - 1);
     device_name[sizeof(device_name) - 1] = '\0';
@@ -400,6 +450,11 @@ int gattWriteCallback(uint16_t characteristic_id, uint8_t *buffer, uint16_t size
     if (!buffer || size == 0) {
         return 0;
     }
+
+    if (parse_frame_packet(buffer, size)) {
+        return 0;
+    }
+
     size_t copy_len = size < kPacketBuffer - 1 ? size : kPacketBuffer - 1;
     char payload[kPacketBuffer] = {};
     memcpy(payload, buffer, copy_len);
