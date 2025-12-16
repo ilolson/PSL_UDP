@@ -136,6 +136,8 @@ struct ContentView: View {
     @StateObject private var bleManager = BLEManager()
     @State private var hue: Double = 25
     @State private var brightness: Double = 15
+    @State private var segmentWidth = maxLights
+    @State private var segmentCenter = (maxLights / 2) + 1
     @State private var segmentStart = 1
     @State private var segmentEnd = maxLights
 
@@ -169,10 +171,10 @@ struct ContentView: View {
             )
 
             sliderView(
-                title: "Segment Start",
+                title: "Segment Center",
                 value: Binding(
-                    get: { Double(segmentStart) },
-                    set: { updateSegmentStart(Int($0.rounded())) }
+                    get: { Double(segmentCenter) },
+                    set: { updateSegmentCenter(Int($0.rounded())) }
                 ),
                 range: 1...Double(maxLights),
                 format: "%.0f",
@@ -180,10 +182,10 @@ struct ContentView: View {
             )
 
             sliderView(
-                title: "Segment End",
+                title: "Segment Width",
                 value: Binding(
-                    get: { Double(segmentEnd) },
-                    set: { updateSegmentEnd(Int($0.rounded())) }
+                    get: { Double(segmentWidth) },
+                    set: { updateSegmentWidth(Int($0.rounded())) }
                 ),
                 range: 1...Double(maxLights),
                 format: "%.0f",
@@ -224,22 +226,44 @@ struct ContentView: View {
         bleManager.sendCommand("SEG_END,\(segmentEnd)")
     }
 
-    private func updateSegmentStart(_ value: Int) {
-        let clamped = max(1, min(value, maxLights))
-        segmentStart = clamped
-        if segmentEnd < segmentStart {
-            segmentEnd = segmentStart
-        }
-        bleManager.sendCommand("SEG_START,\(segmentStart)")
+    private func updateSegmentCenter(_ value: Int) {
+        segmentCenter = clampCenter(value, forWidth: segmentWidth)
+        applySegmentBounds()
     }
 
-    private func updateSegmentEnd(_ value: Int) {
-        let clamped = max(1, min(value, maxLights))
-        segmentEnd = clamped
-        if segmentStart > segmentEnd {
-            segmentStart = segmentEnd
+    private func updateSegmentWidth(_ value: Int) {
+        let clampedWidth = max(1, min(value, maxLights))
+        segmentWidth = clampedWidth
+        segmentCenter = clampCenter(segmentCenter, forWidth: clampedWidth)
+        applySegmentBounds()
+    }
+
+    private func clampCenter(_ center: Int, forWidth width: Int) -> Int {
+        let halfWidth = width / 2
+        let minCenter = halfWidth + 1
+        let tailWidth = width - halfWidth - 1
+        let maxCenter = maxLights - tailWidth
+        return min(max(center, minCenter), maxCenter)
+    }
+
+    private func applySegmentBounds(sendCommands: Bool = true) {
+        let halfWidth = segmentWidth / 2
+        let newStart = max(1, segmentCenter - halfWidth)
+        let newEnd = min(maxLights, newStart + segmentWidth - 1)
+
+        if newStart != segmentStart {
+            segmentStart = newStart
+            if sendCommands {
+                bleManager.sendCommand("SEG_START,\(newStart)")
+            }
         }
-        bleManager.sendCommand("SEG_END,\(segmentEnd)")
+
+        if newEnd != segmentEnd {
+            segmentEnd = newEnd
+            if sendCommands {
+                bleManager.sendCommand("SEG_END,\(newEnd)")
+            }
+        }
     }
 }
 
