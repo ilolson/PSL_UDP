@@ -4,34 +4,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include "pico/stdlib.h"
+#include "pico/stdio_usb.h"
+#include "pico/rand.h"
+
 /* Define the CYW43 architecture header before pulling in the SDK headers */
 #define PICO_CYW43_ARCH_HEADER pico/cyw43_arch/arch_threadsafe_background.h
-
-#define LED_PIN 0
-#define NUM_LEDS 16
-#define PACKET_BUFFER 128
-#define BLE_DEVICE_NAME "PSL Motion"
-#define BLE_DEVICE_NAME_LEN (sizeof(BLE_DEVICE_NAME) - 1)
-
-#define MIN_BRIGHTNESS_NORMALIZED 0.05f
-#define MAX_BRIGHTNESS_NORMALIZED (100.0f / 255.0f)
-
-static const uint8_t PSL_BLE_SERVICE_UUID[16] = {
-    0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f,
-    0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe
-};
-static const uint8_t PSL_COMMAND_CHAR_UUID[16] = {
-    0x0c, 0x1d, 0x2e, 0x3f, 0x40, 0x51, 0x62, 0x73,
-    0x84, 0x95, 0xa6, 0xb7, 0xc8, 0xd9, 0xea, 0xfb
-};
-static uint16_t ble_command_value_handle = 0;
-
-static uint16_t segment_start = 0;
-static uint16_t segment_end = NUM_LEDS - 1;
-
-static void render_color_from_state(void);
-
-#include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 
 #include "hardware/pio.h"
@@ -39,15 +17,74 @@ static void render_color_from_state(void);
 #include "hardware/watchdog.h"
 
 #include "btstack.h"
+#include "btstack_event.h"
+#include "btstack_util.h"
 #include "ble/att_db.h"
-#include "ble/att_db_util.h"
 #include "ble/att_server.h"
+#include "psl_motion_gatt.h"
 
 #include "ws2812.pio.h"
+
+#define LED_PIN 0
+#define NUM_LEDS 300
+#define PACKET_BUFFER 128
+#define BLE_DEVICE_NAME "PSL Motion"
+#define BLE_DEVICE_NAME_LEN (sizeof(BLE_DEVICE_NAME) - 1)
+#define MAX_DEVICE_NAME_LEN (BLE_DEVICE_NAME_LEN + 5)
+#define PSL_SHORT_NAME "PSL Mtn"
+
+#define MIN_BRIGHTNESS_NORMALIZED 0.05f
+#define MAX_BRIGHTNESS_NORMALIZED 1.0f
+#define STARTUP_LOG_WAIT_MS 1000
+
+static const uint8_t PSL_BLE_SERVICE_UUID[16] = {
+    0x21, 0x43, 0x65, 0x87, 0xa9, 0xcb, 0xed, 0x0f,
+    0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe
+};
+static const uint16_t ble_command_value_handle =
+    ATT_CHARACTERISTIC_0C1D2E3F_4051_6273_8495_A6B7C8D9EAFB_01_VALUE_HANDLE;
+
+enum {
+    PSL_SHORT_NAME_LEN = sizeof(PSL_SHORT_NAME) - 1,
+    PSL_ADV_DATA_LEN = 3 + 2 + PSL_SHORT_NAME_LEN + 2 + sizeof(PSL_BLE_SERVICE_UUID),
+    PSL_SCAN_DATA_LEN = 2 + MAX_DEVICE_NAME_LEN
+};
+
+static uint8_t adv_data[PSL_ADV_DATA_LEN];
+static uint8_t scan_data[PSL_SCAN_DATA_LEN];
+static uint8_t adv_data_len = 0;
+static uint8_t scan_data_len = 0;
+static char device_name[MAX_DEVICE_NAME_LEN + 1] = BLE_DEVICE_NAME;
+static uint8_t device_name_len = BLE_DEVICE_NAME_LEN;
+
+static bool advertising_active = false;
+static btstack_packet_callback_registration_t btstack_event_cb;
+
+static uint16_t segment_start = 0;
+static uint16_t segment_end = NUM_LEDS - 1;
+
+static void render_color_from_state(void);
 
 static PIO led_pio = pio0;
 static uint led_sm = 0;
 static uint led_offset = 0;
+
+static void copy_uuid_le(uint8_t *dest, const uint8_t *uuid) {
+    for (size_t i = 0; i < sizeof(PSL_BLE_SERVICE_UUID); ++i) {
+        dest[i] = uuid[sizeof(PSL_BLE_SERVICE_UUID) - 1 - i];
+    }
+}
+
+static void wait_for_usb_logger(void) {
+#if defined(PICO_STDIO_USB) && PICO_STDIO_USB
+    absolute_time_t deadline = make_timeout_time_ms(STARTUP_LOG_WAIT_MS);
+    while (!stdio_usb_connected() && absolute_time_diff_us(get_absolute_time(), deadline) > 0) {
+        tight_loop_contents();
+    }
+#else
+    sleep_ms(STARTUP_LOG_WAIT_MS);
+#endif
+}
 
 static inline float clampf(float value, float min, float max) {
     if (value < min) {
@@ -57,6 +94,27 @@ static inline float clampf(float value, float min, float max) {
         return max;
     }
     return value;
+}
+
+static void configure_random_address(void) {
+    bd_addr_t addr;
+    for (size_t i = 0; i < sizeof(addr); ++i) {
+        addr[i] = (uint8_t)(get_rand_32() & 0xFF);
+    }
+    addr[5] = (addr[5] & 0x3F) | 0xC0;
+    gap_random_address_set(addr);
+    printf("Using random static addr %02x:%02x:%02x:%02x:%02x:%02x\n",
+           addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
+}
+
+static void update_device_name_suffix(void) {
+    uint32_t suffix = get_rand_32() & 0xFFFFu;
+    int written = snprintf(device_name, sizeof(device_name), "%s-%04X", BLE_DEVICE_NAME, (unsigned int)suffix);
+    if (written < 0) {
+        strncpy(device_name, BLE_DEVICE_NAME, sizeof(device_name) - 1);
+        device_name[sizeof(device_name) - 1] = '\0';
+    }
+    device_name_len = (uint8_t)strlen(device_name);
 }
 
 static void hsv_to_rgb(float h, float s, float v, uint8_t *r, uint8_t *g, uint8_t *b) {
@@ -141,9 +199,9 @@ static void set_segment_end(uint32_t end) {
     render_color_from_state();
 }
 
-static float current_hue = 210.0f;
-static float current_saturation = 0.5f;
-static float current_brightness = 0.5f;
+static float current_hue = 25.0f;
+static float current_saturation = 1.0f;
+static float current_brightness = 125.0f / 255.0f;
 static float hue_offset = 0.0f;
 static float brightness_offset = 0.0f;
 
@@ -266,6 +324,78 @@ static void handle_motion_packet(const char *packet, size_t len) {
     }
     if (sscanf(buffer, "%f,%f,%f", &pitch, &roll, &yaw) == 3) {
         render_motion_color(pitch, roll, yaw);
+        return;
+    }
+    printf("Unrecognized BLE packet: '%s'\n", buffer);
+}
+
+static void log_att_data_packet(const uint8_t *packet, uint16_t size) {
+    if (!packet || size == 0) {
+        return;
+    }
+    const uint8_t opcode = packet[0];
+    printf("ATT data opcode=0x%02x len=%u", opcode, size);
+    switch (opcode) {
+    case ATT_EXCHANGE_MTU_REQUEST:
+        if (size >= 3) {
+            const uint16_t client_rx_mtu = little_endian_read_16(packet, 1);
+            printf(" MTU_REQ client=%u", client_rx_mtu);
+        }
+        break;
+    case ATT_EXCHANGE_MTU_RESPONSE:
+        if (size >= 3) {
+            const uint16_t server_rx_mtu = little_endian_read_16(packet, 1);
+            printf(" MTU_RSP server=%u", server_rx_mtu);
+        }
+        break;
+    case ATT_READ_BY_GROUP_TYPE_REQUEST:
+    case ATT_READ_BY_TYPE_REQUEST:
+        if (size >= 5) {
+            const uint16_t start = little_endian_read_16(packet, 1);
+            const uint16_t end = little_endian_read_16(packet, 3);
+            printf(" range=0x%04x-0x%04x", start, end);
+        }
+        break;
+    case ATT_READ_REQUEST:
+    case ATT_READ_BLOB_REQUEST:
+    case ATT_READ_MULTIPLE_REQUEST:
+    case ATT_READ_MULTIPLE_VARIABLE_REQ:
+        if (size >= 3) {
+            const uint16_t handle = little_endian_read_16(packet, 1);
+            printf(" read_handle=0x%04x", handle);
+        }
+        break;
+    case ATT_WRITE_REQUEST:
+    case ATT_WRITE_COMMAND:
+    case ATT_SIGNED_WRITE_COMMAND:
+        if (size >= 3) {
+            const uint16_t handle = little_endian_read_16(packet, 1);
+            printf(" write_handle=0x%04x payload=%u", handle, size - 3);
+        }
+        break;
+    default:
+        break;
+    }
+    printf(" payload:");
+    for (uint16_t i = 0; i < size; ++i) {
+        printf(" %02x", packet[i]);
+    }
+    printf("\n");
+}
+
+static void att_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+    (void)channel;
+    (void)size;
+    if (packet_type == ATT_DATA_PACKET) {
+        log_att_data_packet(packet, size);
+    } else if (packet_type == HCI_EVENT_PACKET) {
+        const uint8_t event_type = hci_event_packet_get_type(packet);
+        if (event_type == ATT_EVENT_CONNECTED) {
+            printf("ATT server connected handle=0x%04x\n", att_event_connected_get_handle(packet));
+        } else if (event_type == ATT_EVENT_DISCONNECTED) {
+            printf("ATT server disconnected handle=0x%04x\n",
+                   att_event_disconnected_get_handle(packet));
+        }
     }
 }
 
@@ -275,6 +405,7 @@ static int ble_command_write_callback(hci_con_handle_t con_handle, uint16_t attr
     (void)offset;
 
     if (attribute_handle != ble_command_value_handle) {
+        printf("Write to unexpected handle 0x%04x (%u bytes)\n", attribute_handle, buffer_size);
         return ATT_ERROR_ATTRIBUTE_NOT_FOUND;
     }
     if (transaction_mode != ATT_TRANSACTION_MODE_NONE || !buffer || buffer_size == 0) {
@@ -286,49 +417,113 @@ static int ble_command_write_callback(hci_con_handle_t con_handle, uint16_t attr
     memcpy(payload, buffer, copy_len);
     payload[copy_len] = '\0';
 
+    printf("BLE write (%u bytes): %s\n", buffer_size, payload);
+
     handle_motion_packet(payload, copy_len);
     return 0;
+}
+
+static void prepare_ble_advertising_payload(void) {
+    memset(adv_data, 0, sizeof(adv_data));
+    size_t adv_index = 0;
+    adv_data[adv_index++] = 2;
+    adv_data[adv_index++] = BLUETOOTH_DATA_TYPE_FLAGS;
+    adv_data[adv_index++] = 0x06;
+
+    adv_data[adv_index++] = 17;
+    adv_data[adv_index++] = BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS;
+    copy_uuid_le(&adv_data[adv_index], PSL_BLE_SERVICE_UUID);
+    adv_index += sizeof(PSL_BLE_SERVICE_UUID);
+    adv_data_len = (uint8_t)adv_index;
+
+    memset(scan_data, 0, sizeof(scan_data));
+    size_t scan_len = 0;
+    scan_data[scan_len++] = (uint8_t)(1 + device_name_len);
+    scan_data[scan_len++] = BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME;
+    memcpy(&scan_data[scan_len], device_name, device_name_len);
+    scan_len += device_name_len;
+    scan_data_len = (uint8_t)scan_len;
+}
+
+static void start_advertising(void) {
+    if (advertising_active) {
+        return;
+    }
+    bd_addr_t null_addr;
+    memset(null_addr, 0, sizeof(null_addr));
+    gap_advertisements_set_params(0x0030, 0x0030, 0x00, 0x01, null_addr, 0x07, 0x00);
+    gap_advertisements_set_data(adv_data_len, adv_data);
+    gap_scan_response_set_data(scan_data_len, scan_data);
+    gap_advertisements_enable(1);
+    advertising_active = true;
+    printf("Advertising %s (%u adv bytes, %u scan bytes)\n",
+           BLE_DEVICE_NAME, adv_data_len, scan_data_len);
+}
+
+static void stop_advertising(void) {
+    if (!advertising_active) {
+        return;
+    }
+    gap_advertisements_enable(0);
+    advertising_active = false;
+}
+
+static void btstack_event_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+    (void)channel;
+    (void)size;
+    if (packet_type != HCI_EVENT_PACKET) {
+        return;
+    }
+    const uint8_t event_type = hci_event_packet_get_type(packet);
+    switch (event_type) {
+    case BTSTACK_EVENT_STATE: {
+        const uint8_t state = btstack_event_state_get_state(packet);
+        printf("BTstack state %u\n", state);
+        if (state == HCI_STATE_WORKING) {
+            printf("BTstack ready, enabling advertising\n");
+            configure_random_address();
+            start_advertising();
+        }
+        break;
+    }
+    case HCI_EVENT_LE_META: {
+        const uint8_t subevent = hci_event_le_meta_get_subevent_code(packet);
+        if (subevent == HCI_SUBEVENT_LE_CONNECTION_COMPLETE) {
+            printf("LE connected handle=0x%04x status=%u\n",
+                   hci_subevent_le_connection_complete_get_connection_handle(packet),
+                   hci_subevent_le_connection_complete_get_status(packet));
+        }
+        break;
+    }
+    case HCI_EVENT_DISCONNECTION_COMPLETE:
+        printf("LE disconnected handle=0x%04x reason=0x%02x\n",
+               hci_event_disconnection_complete_get_connection_handle(packet),
+               hci_event_disconnection_complete_get_reason(packet));
+        stop_advertising();
+        start_advertising();
+        break;
+    default:
+        break;
+    }
 }
 
 static void init_ble_service(void) {
     l2cap_init();
     sm_init();
 
-    att_db_util_init();
-    att_db_util_add_service_uuid128(PSL_BLE_SERVICE_UUID);
-    ble_command_value_handle = att_db_util_add_characteristic_uuid128(
-        PSL_COMMAND_CHAR_UUID,
-        ATT_PROPERTY_WRITE | ATT_PROPERTY_WRITE_WITHOUT_RESPONSE,
-        ATT_SECURITY_NONE,
-        ATT_SECURITY_NONE,
-        NULL,
-        0);
-    att_server_init(att_db_util_get_address(), NULL, ble_command_write_callback);
+    update_device_name_suffix();
+    att_server_init(profile_data, NULL, ble_command_write_callback);
+    att_server_register_packet_handler(att_packet_handler);
 
-    uint8_t adv_data[21];
-    size_t adv_index = 0;
-    adv_data[adv_index++] = 2;
-    adv_data[adv_index++] = BLUETOOTH_DATA_TYPE_FLAGS;
-    adv_data[adv_index++] = 0x06;
-    adv_data[adv_index++] = 17;
-    adv_data[adv_index++] = BLUETOOTH_DATA_TYPE_COMPLETE_LIST_OF_128_BIT_SERVICE_CLASS_UUIDS;
-    memcpy(&adv_data[adv_index], PSL_BLE_SERVICE_UUID, sizeof(PSL_BLE_SERVICE_UUID));
-    adv_index += sizeof(PSL_BLE_SERVICE_UUID);
+    prepare_ble_advertising_payload();
 
-    uint8_t scan_data[2 + BLE_DEVICE_NAME_LEN];
-    size_t scan_len = 0;
-    scan_data[scan_len++] = (uint8_t)(1 + BLE_DEVICE_NAME_LEN);
-    scan_data[scan_len++] = BLUETOOTH_DATA_TYPE_COMPLETE_LOCAL_NAME;
-    memcpy(&scan_data[scan_len], BLE_DEVICE_NAME, BLE_DEVICE_NAME_LEN);
-    scan_len += BLE_DEVICE_NAME_LEN;
-
-    bd_addr_t null_addr;
-    memset(null_addr, 0, sizeof(null_addr));
-    gap_advertisements_set_params(0x0030, 0x0030, 0, 0, null_addr, 0x07, 0x00);
-    const uint8_t adv_len = (uint8_t)adv_index;
-    gap_advertisements_set_data(adv_len, adv_data);
-    gap_scan_response_set_data((uint8_t)scan_len, scan_data);
-    gap_advertisements_enable(1);
+    memset(&btstack_event_cb, 0, sizeof(btstack_event_cb));
+    btstack_event_cb.callback = &btstack_event_handler;
+    hci_add_event_handler(&btstack_event_cb);
+    printf("ATT handles: custom svc %04x-%04x cmd=%04x\n",
+           ATT_SERVICE_21436587_A9CB_ED0F_1032_547698BADCFE_START_HANDLE,
+           ATT_SERVICE_21436587_A9CB_ED0F_1032_547698BADCFE_END_HANDLE,
+           ble_command_value_handle);
 
     hci_power_control(HCI_POWER_ON);
     printf("BLE %s service ready\n", BLE_DEVICE_NAME);
@@ -336,6 +531,7 @@ static void init_ble_service(void) {
 
 int main(void) {
     stdio_init_all();
+    wait_for_usb_logger();
     printf("Starting PSL BLE motion controller\n");
 
     if (cyw43_arch_init()) {

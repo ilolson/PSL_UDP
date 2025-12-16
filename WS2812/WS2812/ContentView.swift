@@ -11,8 +11,10 @@ import CoreBluetooth
 import CoreMotion
 
 private let serviceUUID = CBUUID(string: "21436587-A9CB-ED0F-1032-547698BADCFE")
-private let commandCharacteristicUUID = CBUUID(string: "0C1D-2E3F-4051-6273-8495A6B7C8D9EAFB")
+private let commandCharacteristicUUID = CBUUID(string: "0C1D2E3F-4051-6273-8495-A6B7C8D9EAFB")
 private let maxLights = 300
+private let bleDeviceName = "PSL Motion"
+private let bleShortName = "PSL Mtn"
 
 final class BLEManager: NSObject, ObservableObject {
     @Published var status: String = "scanning for PSL Motion"
@@ -20,6 +22,7 @@ final class BLEManager: NSObject, ObservableObject {
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var commandCharacteristic: CBCharacteristic?
+    private var serviceDiscoveryAttempts = 0
 
     override init() {
         super.init()
@@ -42,7 +45,7 @@ extension BLEManager: CBCentralManagerDelegate {
         switch central.state {
         case .poweredOn:
             status = "scanning..."
-            central.scanForPeripherals(withServices: [serviceUUID])
+            central.scanForPeripherals(withServices: nil)
         default:
             status = "Bluetooth unavailable"
         }
@@ -50,8 +53,14 @@ extension BLEManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                         advertisementData: [String : Any], rssi RSSI: NSNumber) {
+        let displayName = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? "device"
+        let serviceUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+        guard displayName == bleDeviceName || displayName == bleShortName || serviceUUIDs.contains(serviceUUID) else {
+            return
+        }
+
+        status = "connecting to \(displayName)"
         self.peripheral = peripheral
-        status = "connecting to \(peripheral.name ?? "device")"
         central.stopScan()
         peripheral.delegate = self
         central.connect(peripheral)
@@ -59,26 +68,57 @@ extension BLEManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         status = "discovering services"
-        peripheral.discoverServices([serviceUUID])
+        serviceDiscoveryAttempts = 0
+        peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         status = "connection failed"
-        central.scanForPeripherals(withServices: [serviceUUID])
+        self.peripheral = nil
+        commandCharacteristic = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            central.scanForPeripherals(withServices: nil)
+        }
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         status = "disconnected"
+        self.peripheral = nil
         commandCharacteristic = nil
-        central.scanForPeripherals(withServices: [serviceUUID])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            central.scanForPeripherals(withServices: nil)
+        }
     }
 }
 
 extension BLEManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let services = peripheral.services else { return }
-        for service in services where service.uuid == serviceUUID {
+        if let error {
+            status = "service discovery error: \(error.localizedDescription)"
+            scheduleServiceDiscovery(peripheral)
+            return
+        }
+        guard let services = peripheral.services else {
+            status = "service discovery returned empty list"
+            scheduleServiceDiscovery(peripheral)
+            return
+        }
+        status = "services: \(services.map(\.uuid.uuidString).joined(separator: ","))"
+        if let service = services.first(where: { $0.uuid == serviceUUID }) {
             peripheral.discoverCharacteristics([commandCharacteristicUUID], for: service)
+            return
+        }
+        scheduleServiceDiscovery(peripheral)
+    }
+
+    private func scheduleServiceDiscovery(_ peripheral: CBPeripheral) {
+        serviceDiscoveryAttempts += 1
+        guard serviceDiscoveryAttempts <= 5 else {
+            status = "service not found"
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            peripheral.discoverServices(nil)
         }
     }
 

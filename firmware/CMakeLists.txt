@@ -31,11 +31,10 @@ target_compile_options(psl_udp PRIVATE -Wall -Wextra)
 # TinyUSB is provided by the Pico SDK
 target_link_libraries(psl_udp
     pico_stdlib
-    tinyusb_device
-    tinyusb_board
     pico_btstack_ble
     pico_btstack_cyw43
-    pico_cyw43_arch_none
+    pico_cyw43_arch_threadsafe_background
+    pico_rand
     hardware_pio
     hardware_gpio
     hardware_clocks
